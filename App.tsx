@@ -1,4 +1,3 @@
-
 import React, { useState, useMemo, useEffect } from 'react';
 import { DropZone } from './components/DropZone';
 import { PreviewTable } from './components/PreviewTable';
@@ -174,7 +173,7 @@ const App: React.FC = () => {
       {/* Header */}
       <header className="flex items-center justify-between px-6 h-16 border-b border-[#333] bg-[#111] shrink-0">
         <div className="flex flex-col justify-center">
-            <h1 className="text-base font-black text-blue-500 tracking-wide uppercase leading-none mb-1">AI VIDEO SYNTHESIZER</h1>
+            <h1 className="text-base font-black text-blue-500 tracking-wide uppercase leading-none mb-1">AI VIDEO EDITOR</h1>
             <div className="text-[11px] text-[#666] font-medium truncate max-w-[300px]">
                 {xmlName ? xmlName : "Project Ready"}
             </div>
