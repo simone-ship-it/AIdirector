@@ -1,0 +1,5 @@
+{
+  "name": "AI Video Synthesizer",
+  "description": "A professional AI-assisted video editing tool for generating cuts from Premiere Pro XML and SRT transcripts.",
+  "requestFramePermissions": []
+}
