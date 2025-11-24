@@ -52,16 +52,11 @@ export class SrtParser {
       // Recover from potential garbage lines or empty blocks
       if (lines.length < 2) return;
 
-      // Try to identify the index line (digits only)
-      let indexLineIdx = 0;
-      if (!lines[0].match(/^\d+$/)) {
-          // Sometimes file starts with garbage, try to find the first number line
-          // or just assume line 0 is index if line 1 is timestamp
-      }
-
       // Identify Timestamp line (contains '-->')
       let timeLineIdx = lines.findIndex(l => l.includes('-->'));
       
+      // If we found a timestamp but it's not the second line (index 1),
+      // we might have leading garbage.
       if (timeLineIdx !== -1) {
           const timeLine = lines[timeLineIdx];
           const [startStr, endStr] = timeLine.split('-->');
@@ -94,10 +89,11 @@ export class SrtParser {
   generateExportSrt(cuts: any[], fps: number): string {
     let output = '';
     let currentSeconds = 0;
+    const safeFps = (isNaN(fps) || fps <= 0) ? 25 : fps;
 
     cuts.forEach((cut, index) => {
         // Duration in seconds based on frame count
-        const durationSec = cut.duration / fps;
+        const durationSec = cut.duration / safeFps;
         
         const start = this.secondsToSrtTime(currentSeconds);
         const end = this.secondsToSrtTime(currentSeconds + durationSec);

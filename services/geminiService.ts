@@ -15,28 +15,54 @@ export class GeminiService {
         targetDuration: number,
         seed: number
     ): Promise<number[]> {
-        // Simplify input significantly to reduce token load
+        // 1. Optimize Input: Send duration (d) and text (t)
         const simplifiedTranscript = srtData.map(s => ({
             id: s.id,
-            text: s.text,
+            d: Number((s.endTime - s.startTime).toFixed(1)), // Duration in seconds (1 decimal)
+            t: s.text.replace(/[\r\n]+/g, ' ').trim(), 
         }));
 
-        const prompt = `
-        Act as a professional Video Editor.
+        // 2. Calculate Statistics for strict guidance
+        const totalInputDuration = simplifiedTranscript.reduce((acc, cur) => acc + cur.d, 0);
+        const avgLineDuration = totalInputDuration / (simplifiedTranscript.length || 1);
         
-        OBJECTIVE:
-        Select a subset of subtitle IDs to create a video summary.
+        // Estimate Padding Overhead:
+        // VideoEngine adds 10 frames total padding per cut. At 25fps that is 0.4s.
+        // We use 0.5s to be safe.
+        const ESTIMATED_PADDING_PER_CUT = 0.5;
         
-        INPUT PARAMETERS:
-        - Target Duration: ${targetDuration} seconds.
-        - User Instructions: "${userInstructions}"
+        // Calculate a safe "Content Duration" target for the AI.
+        // If we want 60s total, and we expect 10 cuts, we lose 5s to padding.
+        // So AI should only find 55s of raw content.
+        const estimatedCuts = targetDuration / (avgLineDuration + ESTIMATED_PADDING_PER_CUT);
+        const paddingBuffer = estimatedCuts * ESTIMATED_PADDING_PER_CUT; 
+        
+        // Ask AI for slightly LESS than the target to accommodate the engine's padding
+        const aiTargetDuration = Math.max(10, targetDuration - paddingBuffer);
+        const targetLineCount = Math.floor(aiTargetDuration / (avgLineDuration || 1));
 
-        CRITICAL RULES:
-        1. CONFLICT RESOLUTION: The numeric Target Duration (${targetDuration}s) ALWAYS overrides any duration mentioned in the User Instructions. Ignore text like "halve the video" if it conflicts with the number.
-        2. FLOW: Prioritize selecting CONTIGUOUS blocks of IDs (e.g., [10, 11, 12, 13]) rather than isolated lines. This is crucial for smooth audio.
-        3. GRAMMAR: Do not start a cut with conjunctions (And, But, So) unless the previous line is also selected.
-        4. NARRATIVE: Ensure the selection has a logical start, middle, and end.
+        // 3. Construct System Instruction
+        const systemInstruction = `
+        Act as a professional Video Editor.
+        Your goal is to select a subset of subtitle IDs to create a video summary.
+
+        INPUT DATA:
+        Array of { "id": number, "d": duration_seconds, "t": text }.
+
+        STRICT CONSTRAINTS:
+        1. TOTAL DURATION LIMIT: ${targetDuration} seconds.
+        2. RAW CONTENT GOAL: ~${Math.floor(aiTargetDuration)} seconds (The engine adds padding to cuts).
+        3. TARGET LINES: Approx ${targetLineCount} IDs.
         
+        CRITICAL RULES:
+        - DO NOT exceed the duration limit. It is better to be shorter.
+        - You MUST skip less important sections.
+        - Group IDs that form a coherent thought.
+        
+        USER GOAL: "${userInstructions}"
+        `;
+
+        const userPrompt = `
         TRANSCRIPT DATA:
         ${JSON.stringify(simplifiedTranscript)}
         `;
@@ -56,71 +82,107 @@ export class GeminiService {
         try {
             const response = await this.ai.models.generateContent({
                 model: 'gemini-2.5-flash',
-                contents: prompt,
+                contents: userPrompt,
                 config: {
+                    systemInstruction: systemInstruction,
                     responseMimeType: "application/json",
                     responseSchema: schema,
-                    temperature: 0.1, // Low temperature for high determinism
-                    seed: seed, // Fix randomness using the seed
-                    maxOutputTokens: 8192,
-                    safetySettings: [
-                        { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
-                        { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
-                        { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
-                        { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
-                        { category: 'HARM_CATEGORY_CIVIC_INTEGRITY', threshold: 'BLOCK_NONE' },
-                    ]
+                    temperature: 0.1, // Very low temp for strict adherence
+                    seed: seed,
+                    thinkingConfig: { thinkingBudget: 0 },
                 }
             });
 
-            const text = response.text;
-            if (!text) {
-                throw new Error("Empty response from AI. The model blocked the content or failed to generate.");
+            // 4. Response Handling
+            const candidate = response.candidates?.[0];
+            
+            if (!candidate) {
+                throw new Error("No candidates returned from AI.");
             }
+
+            if (candidate.finishReason !== "STOP") {
+                throw new Error(`AI stopped generation abnormally. Reason: ${candidate.finishReason}.`);
+            }
+
+            let text = response.text;
+            if (!text) throw new Error("Empty text response.");
+
+            // Cleanup
+            text = text.trim();
+            if (text.startsWith('```json')) {
+                text = text.replace(/^```json\s?/, '').replace(/\s?```$/, '');
+            } else if (text.startsWith('```')) {
+                text = text.replace(/^```\s?/, '').replace(/\s?```$/, '');
+            }
+            text = text.trim();
 
             const result = JSON.parse(text);
             
             if (!result.selectedIds || !Array.isArray(result.selectedIds)) {
-                throw new Error("Invalid JSON structure returned by AI");
+                throw new Error("Invalid JSON structure");
             }
             
-            return result.selectedIds;
+            // 5. Post-Processing: HARD LIMIT ENFORCER
+            // We calculate the *actual* duration the VideoEngine will generate.
+            // (Raw Duration + Padding)
+            // We stop adding IDs the moment we cross the targetDuration.
+            
+            let accumulatedDuration = 0;
+            const filteredIds: number[] = [];
+            const idMap = new Map(simplifiedTranscript.map(s => [s.id, s.d]));
+
+            for (const id of result.selectedIds) {
+                const rawDur = idMap.get(id);
+                
+                // Skip invalid IDs
+                if (rawDur === undefined) continue;
+
+                // Simulate the VideoEngine's padding logic (approx 0.4s - 0.5s)
+                const clipTotalDuration = rawDur + ESTIMATED_PADDING_PER_CUT;
+
+                // Check if adding this clip would exceed the user's requested total
+                if (accumulatedDuration + clipTotalDuration > targetDuration) {
+                    // Stop immediately. Do not add this clip.
+                    break; 
+                }
+
+                accumulatedDuration += clipTotalDuration;
+                filteredIds.push(id);
+            }
+
+            // Fallback: If AI returned almost nothing, return at least one ID if available
+            if (filteredIds.length === 0 && result.selectedIds.length > 0) {
+                 return [result.selectedIds[0]];
+            }
+
+            return filteredIds;
 
         } catch (e: any) {
             console.error("Gemini API Error:", e);
+             if (e.message && e.message.includes("JSON")) {
+                 throw new Error(`AI JSON Parsing Error: ${e.message}.`);
+            }
             throw new Error(`AI Error: ${e.message || 'Unknown error'}`);
         }
     }
 
     async generateSourceSummary(srtData: SrtEntry[]): Promise<string> {
         const fullText = srtData.map(s => s.text).join(" ");
+        const truncatedText = fullText.length > 30000 ? fullText.substring(0, 30000) + "..." : fullText;
         
         const prompt = `
-        Analyze this transcript and provide a 3-bullet point technical summary in Italian (Topic, Speaker Type, Key Themes). Keep it under 50 words.
-        
-        Transcript:
-        "${fullText.substring(0, 10000)}" 
+        Analyze this transcript and provide a 3-bullet point technical summary in Italian.
+        Transcript: "${truncatedText}" 
         `;
 
         try {
             const response = await this.ai.models.generateContent({
                 model: 'gemini-2.5-flash',
                 contents: prompt,
-                config: {
-                    temperature: 0.2,
-                    safetySettings: [
-                        { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
-                        { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
-                        { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
-                        { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
-                        { category: 'HARM_CATEGORY_CIVIC_INTEGRITY', threshold: 'BLOCK_NONE' },
-                    ]
-                }
+                config: { temperature: 0.2 }
             });
-
             return response.text || "Analisi non disponibile.";
         } catch (e) {
-            console.error("Gemini Summary Error:", e);
             return "Analisi non disponibile.";
         }
     }

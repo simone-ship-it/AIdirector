@@ -16,7 +16,12 @@ export class PremiereXmlParser {
     if (!timebaseNode) {
         timebaseNode = xmlDoc.querySelector("xmeml > sequence > rate > timebase");
     }
-    const fps = timebaseNode ? parseInt(timebaseNode.textContent || "25", 10) : 25;
+    
+    let fps = timebaseNode ? parseInt(timebaseNode.textContent || "25", 10) : 25;
+    // Safety check: Prevent 0 or NaN FPS which causes division errors later
+    if (isNaN(fps) || fps <= 0) {
+        fps = 25;
+    }
 
     // 1b. Extract Resolution
     let width = 1920;
@@ -101,6 +106,9 @@ export class PremiereXmlParser {
     let audioTrack2Content = '';
     
     let currentTime = 0;
+    
+    // Safety check for FPS to avoid NaN in XML
+    const safeFps = (isNaN(fps) || fps <= 0) ? 25 : fps;
 
     cuts.forEach((cut, index) => {
         const duration = cut.duration;
@@ -115,7 +123,7 @@ export class PremiereXmlParser {
             <enabled>TRUE</enabled>
             <duration>${duration}</duration>
             <rate>
-                <timebase>${fps}</timebase>
+                <timebase>${safeFps}</timebase>
                 <ntsc>FALSE</ntsc>
             </rate>
             <start>${currentTime}</start>
@@ -126,14 +134,14 @@ export class PremiereXmlParser {
                 <name>${cut.clipName}</name>
                 <pathurl>${cut.filePath || ''}</pathurl>
                 <rate>
-                    <timebase>${fps}</timebase>
+                    <timebase>${safeFps}</timebase>
                     <ntsc>FALSE</ntsc>
                 </rate>
                 <media>
                     <video>
                         <samplecharacteristics>
                             <rate>
-                                <timebase>${fps}</timebase>
+                                <timebase>${safeFps}</timebase>
                                 <ntsc>FALSE</ntsc>
                             </rate>
                             <width>${width}</width> 
@@ -179,7 +187,7 @@ export class PremiereXmlParser {
             <enabled>TRUE</enabled>
             <duration>${duration}</duration>
             <rate>
-                <timebase>${fps}</timebase>
+                <timebase>${safeFps}</timebase>
                 <ntsc>FALSE</ntsc>
             </rate>
             <start>${currentTime}</start>
@@ -219,7 +227,7 @@ export class PremiereXmlParser {
             <enabled>TRUE</enabled>
             <duration>${duration}</duration>
             <rate>
-                <timebase>${fps}</timebase>
+                <timebase>${safeFps}</timebase>
                 <ntsc>FALSE</ntsc>
             </rate>
             <start>${currentTime}</start>
@@ -261,7 +269,7 @@ export class PremiereXmlParser {
     <uuid>${crypto.randomUUID()}</uuid>
     <name>AI_Sequence_${new Date().toISOString().slice(0,10)}</name>
     <rate>
-        <timebase>${fps}</timebase>
+        <timebase>${safeFps}</timebase>
         <ntsc>FALSE</ntsc>
     </rate>
     <media>
@@ -269,7 +277,7 @@ export class PremiereXmlParser {
             <format>
                 <samplecharacteristics>
                     <rate>
-                        <timebase>${fps}</timebase>
+                        <timebase>${safeFps}</timebase>
                         <ntsc>FALSE</ntsc>
                     </rate>
                     <width>${width}</width>
