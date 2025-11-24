@@ -99,7 +99,7 @@ export class VideoEngine {
 
     /**
      * Calculates the final cut based on selected IDs.
-     * Handles clamping to ensure we don't select black frames or cross clip boundaries.
+     * NOW INCLUDES: Overlap Merging to prevent duplicate frames/stuttering.
      */
     calculateCuts(
         selectedSrtIds: number[], 
@@ -107,82 +107,138 @@ export class VideoEngine {
         sequenceData: SequenceData
     ): EditDecision[] {
         
-        const cuts: EditDecision[] = [];
-        let sequenceAccumulator = 0; 
-
-        const srtMap = new Map(fullSrt.map(s => [s.id, s]));
+        // 0. Sort IDs chronologically to ensure linear flow
+        // This is crucial for the merging logic to work correctly.
+        const sortedIds = [...selectedSrtIds].sort((a, b) => a - b);
         
-        selectedSrtIds.forEach((id) => {
+        const srtMap = new Map(fullSrt.map(s => [s.id, s]));
+        const paddingHead = 5;
+        const paddingTail = 5;
+
+        // --- PASS 1: Generate Raw Segment Candidates ---
+        interface RawSegment {
+            srtId: number;
+            text: string;
+            fileId: string;
+            filePath: string;
+            clipName: string;
+            sourceIn: number;
+            sourceOut: number;
+            masterClipId: string;
+            trackIndex: number;
+        }
+
+        const rawSegments: RawSegment[] = [];
+
+        for (const id of sortedIds) {
             const srt = srtMap.get(id);
-            if (!srt) return;
+            if (!srt) continue;
 
             const srtStartFrame = Math.floor(srt.startTime * sequenceData.fps);
             const srtEndFrame = Math.floor(srt.endTime * sequenceData.fps);
+            const rawDuration = srtEndFrame - srtStartFrame;
             
-            let rawDuration = srtEndFrame - srtStartFrame;
-            if (rawDuration <= 0) return;
+            if (rawDuration <= 0) continue;
 
-            // Find the clip covering this start time
+            // Find clip
             const clip = sequenceData.clips.find(c => 
                 c.start <= srtStartFrame && c.end > srtStartFrame 
             );
+            if (!clip) continue;
 
-            if (!clip) {
-                // Skip gaps
-                return;
-            }
-
-            // Calculate exact sync points
+            // Calculate Source Points with Padding
             const offsetFromClipStart = srtStartFrame - clip.start;
-            
-            // Apply padding logic
-            const paddingHead = 5;
-            const paddingTail = 5;
-
             let newSourceIn = (clip.in + offsetFromClipStart) - paddingHead;
-            
-            // Safety: Ensure we don't trim before the physical media start
-            // (Assuming mostly 0-based or standard TC, simplistic check)
-            if (newSourceIn < 0) newSourceIn = 0; 
+            if (newSourceIn < 0) newSourceIn = 0;
 
-            // Calculate Max Length available in this specific clip from the In Point
-            // (Clip End in Source) - (New In Point)
-            // clip.out is the source out point used in timeline. 
-            // Actually easier: Frame count remaining on timeline = clip.end - srtStartFrame
-            const framesRemainingInClip = clip.end - srtStartFrame; 
-
+            // Clamp max duration to clip end
+            const framesRemainingInClip = clip.end - srtStartFrame;
             let desiredDuration = rawDuration + paddingHead + paddingTail;
-            
-            // Clamp duration: Cannot be longer than what's left in the clip + a bit of padding logic adjustment
-            // Actually, precise logic:
-            // We can't play past clip.out (source) unless the underlying file has handles, 
-            // but we only know about the XML clip bounds. We must assume we can't go past clip.end.
-            
             let finalDuration = Math.min(desiredDuration, framesRemainingInClip + paddingHead);
             
-            if (finalDuration < 1) return;
-
+            if (finalDuration < 1) continue;
+            
             const newSourceOut = newSourceIn + finalDuration;
 
-            cuts.push({
-                sequenceIndex: cuts.length + 1,
+            rawSegments.push({
                 srtId: id,
-                clipName: clip.name,
                 text: srt.text,
-                timelineIn: sequenceAccumulator,
-                timelineOut: sequenceAccumulator + finalDuration,
-                sourceIn: Math.floor(newSourceIn),
-                sourceOut: Math.floor(newSourceOut),
                 fileId: clip.fileId,
                 filePath: clip.filePath,
-                duration: Math.floor(finalDuration),
+                clipName: clip.name,
+                sourceIn: Math.floor(newSourceIn),
+                sourceOut: Math.floor(newSourceOut),
                 masterClipId: clip.masterClipId,
                 trackIndex: clip.trackIndex
             });
+        }
 
-            sequenceAccumulator += Math.floor(finalDuration);
+        // --- PASS 2: Merge Overlapping or Adjacent Segments ---
+        // This fixes the "Duplicate Frames" issue in Premiere.
+        // If Segment A ends at frame 100, and Segment B starts at frame 95 (due to padding overlap),
+        // we merge them into one continuous clip from A.Start to B.End.
+
+        const mergedSegments: RawSegment[] = [];
+
+        if (rawSegments.length > 0) {
+            let current = rawSegments[0];
+
+            for (let i = 1; i < rawSegments.length; i++) {
+                const next = rawSegments[i];
+
+                // Check if they are from the same source file and contiguous/overlapping
+                const isSameFile = current.fileId === next.fileId;
+                
+                // Allow a small gap (e.g. 2 frames) to be treated as continuous to avoid micro-cuts
+                const isOverlappingOrAdjacent = next.sourceIn <= (current.sourceOut + 2);
+
+                if (isSameFile && isOverlappingOrAdjacent) {
+                    // MERGE
+                    // We extend the current clip's Out point to the next clip's Out point
+                    // (Use Math.max in case next is somehow shorter/inside current)
+                    current.sourceOut = Math.max(current.sourceOut, next.sourceOut);
+                    
+                    // Append text for clarity in the summary view
+                    current.text += " " + next.text;
+                    
+                    // We consume 'next' into 'current', so we don't push 'next' yet.
+                } else {
+                    // No merge possible (different file or large gap)
+                    // Push current to finished list and start a new current
+                    mergedSegments.push(current);
+                    current = next;
+                }
+            }
+            // Push the final straggler
+            mergedSegments.push(current);
+        }
+
+        // --- PASS 3: Calculate Timeline Positions (Edit Decisions) ---
+        const finalCuts: EditDecision[] = [];
+        let sequenceAccumulator = 0;
+
+        mergedSegments.forEach((seg, index) => {
+            const duration = seg.sourceOut - seg.sourceIn;
+            
+            finalCuts.push({
+                sequenceIndex: index + 1,
+                srtId: seg.srtId, // Keeps the ID of the first merged block
+                clipName: seg.clipName,
+                text: seg.text,
+                timelineIn: sequenceAccumulator,
+                timelineOut: sequenceAccumulator + duration,
+                sourceIn: seg.sourceIn,
+                sourceOut: seg.sourceOut,
+                fileId: seg.fileId,
+                filePath: seg.filePath,
+                duration: duration,
+                masterClipId: seg.masterClipId,
+                trackIndex: seg.trackIndex
+            });
+
+            sequenceAccumulator += duration;
         });
 
-        return cuts;
+        return finalCuts;
     }
 }

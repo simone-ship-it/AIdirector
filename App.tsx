@@ -1,4 +1,3 @@
-
 import React, { useState, useMemo, useEffect } from 'react';
 import { DropZone } from './components/DropZone';
 import { PreviewTable } from './components/PreviewTable';
@@ -73,6 +72,25 @@ const App: React.FC = () => {
         console.error("SRT Parse error", e);
         setProcessState({ status: 'error', message: 'Errore parsing SRT' });
     }
+  };
+
+  const handleReset = () => {
+      if (sequenceData || srtData.length > 0) {
+          if (!window.confirm("Sei sicuro di voler iniziare un nuovo progetto? I dati attuali andranno persi.")) {
+              return;
+          }
+      }
+      setXmlContent('');
+      setSrtContent('');
+      setXmlName('');
+      setSrtName('');
+      setSequenceData(null);
+      setSrtData([]);
+      setSourceCuts([]);
+      setGeneratedCuts([]);
+      setViewMode('source');
+      setProcessState({ status: 'idle', message: '' });
+      setInstructions('Mantieni le parti più coinvolgenti e riassumi la storia.');
   };
 
   // Effect: Generate Source Preview when data is ready
@@ -178,11 +196,25 @@ const App: React.FC = () => {
       
       {/* Header */}
       <header className="flex items-center justify-between px-6 h-16 border-b border-[#333] bg-[#111] shrink-0">
-        <div className="flex flex-col justify-center">
-            <h1 className="text-base font-black text-blue-500 tracking-wide uppercase leading-none mb-1">AI VIDEO EDITOR</h1>
-            <div className="text-[11px] text-[#666] font-medium truncate max-w-[300px]">
-                {xmlName ? xmlName : "Project Ready"}
+        <div className="flex items-center gap-4">
+            <div className="flex flex-col justify-center">
+                <h1 className="text-base font-black text-blue-500 tracking-wide uppercase leading-none mb-1">AI VIDEO EDITOR</h1>
+                <div className="text-[11px] text-[#666] font-medium truncate max-w-[200px]">
+                    {xmlName ? xmlName : "Project Ready"}
+                </div>
             </div>
+            
+            {/* New Project / Reset Button */}
+            {(xmlContent || srtContent) && (
+                <button 
+                    onClick={handleReset}
+                    className="flex items-center gap-1 px-2 py-1 text-[10px] bg-[#1a1a1a] hover:bg-[#252525] text-[#777] hover:text-red-400 border border-[#333] rounded transition-colors"
+                    title="Nuovo Progetto"
+                >
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                    <span>RESET</span>
+                </button>
+            )}
         </div>
 
         <div className="flex items-center gap-6">
@@ -224,71 +256,66 @@ const App: React.FC = () => {
 
       <div className="flex flex-1 overflow-hidden">
         
-        {/* Left Sidebar */}
+        {/* Left Sidebar - Compacted */}
         <aside className="w-72 bg-[#111] border-r border-[#333] flex flex-col z-10">
-            <div className="p-4 space-y-6 overflow-y-auto custom-scrollbar flex-1">
+            <div className="p-3 space-y-4 overflow-y-auto custom-scrollbar flex-1">
                 
-                {/* Step 1: Import */}
-                <div className="space-y-2">
-                    <div className="text-[10px] font-bold text-[#555] uppercase tracking-widest mb-2">
-                        <span className="text-blue-500 mr-1">01</span> IMPORTAZIONE
+                {/* Step 1: Import (Side-by-side) */}
+                <div>
+                    <div className="text-[10px] font-bold text-[#555] uppercase tracking-widest mb-1.5">
+                        <span className="text-blue-500 mr-1">01</span> IMPORT
                     </div>
-                    <DropZone 
-                        label="Drop XML" 
-                        accept=".xml" 
-                        fileType="xml"
-                        onFileLoaded={handleXmlLoad} 
-                        isLoaded={!!xmlContent}
-                        fileName={xmlName}
-                    />
-                    <DropZone 
-                        label="Drop SRT" 
-                        accept=".srt" 
-                        fileType="srt"
-                        onFileLoaded={handleSrtLoad} 
-                        isLoaded={!!srtContent}
-                        fileName={srtName}
-                    />
+                    <div className="grid grid-cols-2 gap-2">
+                        <DropZone 
+                            label="XML" 
+                            accept=".xml" 
+                            fileType="xml"
+                            onFileLoaded={handleXmlLoad} 
+                            isLoaded={!!xmlContent}
+                            fileName={xmlName}
+                        />
+                        <DropZone 
+                            label="SRT" 
+                            accept=".srt" 
+                            fileType="srt"
+                            onFileLoaded={handleSrtLoad} 
+                            isLoaded={!!srtContent}
+                            fileName={srtName}
+                        />
+                    </div>
                 </div>
 
                 <div className="w-full h-px bg-[#222]"></div>
 
                 {/* Step 2: Strategy */}
-                <div className="space-y-3">
-                    <div className="text-[10px] font-bold text-[#555] uppercase tracking-widest mb-2">
+                <div className="space-y-2">
+                    <div className="text-[10px] font-bold text-[#555] uppercase tracking-widest mb-1.5">
                         <span className="text-blue-500 mr-1">02</span> STRATEGIA
                     </div>
                     
                     {sequenceData ? (
-                        <div className="bg-[#161616] border border-[#333] rounded-sm p-3 mb-3">
-                            <div className="mb-2">
-                                <span className="text-[9px] font-bold text-[#666] uppercase tracking-wide">
-                                    DATI TECNICI
-                                </span>
-                            </div>
-                            <div className="grid grid-cols-2 gap-2 text-[10px] font-mono text-[#aaa]">
+                        <div className="bg-[#161616] border border-[#333] rounded-sm p-2 mb-2">
+                            <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-[9px] font-mono text-[#aaa]">
                                 <div>FPS: <span className="text-[#eee]">{fps.toFixed(2)}</span></div>
-                                <div>RES: <span className="text-[#eee]">{resWidth}x{resHeight}</span></div>
                                 <div>CLIP: <span className="text-[#eee]">{uniqueFiles}</span></div>
-                                <div>AUDIO: <span className="text-[#eee]">Stereo</span></div>
+                                <div className="col-span-2">RES: <span className="text-[#eee]">{resWidth}x{resHeight}</span></div>
                             </div>
                         </div>
                     ) : (
-                        <div className="bg-[#161616] border border-[#333] border-dashed rounded-sm p-3 mb-3 text-center">
+                        <div className="bg-[#161616] border border-[#333] border-dashed rounded-sm p-2 mb-2 text-center">
                              <span className="text-[9px] font-bold text-[#444] uppercase">
-                                Carica i file per analisi
+                                In attesa file
                             </span>
                         </div>
                     )}
 
                     <div>
-                        <label className="block text-[10px] text-[#888] mb-1 font-semibold">ISTRUZIONI AI</label>
                         <textarea 
-                            rows={4}
+                            rows={2}
                             value={instructions}
                             onChange={(e) => setInstructions(e.target.value)}
                             className="w-full bg-[#0d0d0d] border border-[#333] rounded-sm p-2 text-xs leading-relaxed focus:border-blue-500 focus:outline-none resize-none placeholder-[#444] text-[#ccc]"
-                            placeholder="Es. Riassumi i punti chiave, mantieni tono professionale..."
+                            placeholder="Istruzioni per l'IA..."
                         />
                     </div>
                 </div>
@@ -296,66 +323,65 @@ const App: React.FC = () => {
                 <div className="w-full h-px bg-[#222]"></div>
 
                 {/* Step 3: Generation */}
-                <div className="space-y-3">
-                    <div className="text-[10px] font-bold text-[#555] uppercase tracking-widest mb-2">
+                <div className="space-y-2">
+                    <div className="text-[10px] font-bold text-[#555] uppercase tracking-widest mb-1.5">
                         <span className="text-blue-500 mr-1">03</span> GENERAZIONE
                     </div>
                     
-                    <div>
-                        <label className="block text-[10px] text-[#888] mb-1 font-semibold">DURATA DESIDERATA (SEC)</label>
-                         <input 
-                            type="number" 
-                            min="10" 
-                            max="3600" 
-                            value={targetDuration}
-                            onChange={(e) => setTargetDuration(parseInt(e.target.value) || 0)}
-                            className="w-full bg-[#0d0d0d] border border-[#333] rounded-sm p-2 text-xs font-mono text-blue-400 focus:border-blue-500 focus:outline-none"
-                        />
-                    </div>
-
-                    <div className="flex flex-col gap-1">
-                        <label className="block text-[10px] text-[#888] font-semibold">SEED (CASUALITÀ)</label>
-                        <div className="flex gap-2">
-                             <input 
+                    {/* Compact Inputs Row */}
+                    <div className="grid grid-cols-2 gap-2">
+                        <div>
+                            <label className="block text-[9px] text-[#888] mb-1 font-semibold">DURATA (S)</label>
+                            <input 
                                 type="number" 
-                                value={seed}
-                                onChange={(e) => setSeed(parseInt(e.target.value) || 0)}
-                                className="flex-1 bg-[#0d0d0d] border border-[#333] rounded-sm p-2 text-xs font-mono text-purple-400 focus:border-purple-500 focus:outline-none"
+                                min="10" 
+                                max="3600" 
+                                value={targetDuration}
+                                onChange={(e) => setTargetDuration(parseInt(e.target.value) || 0)}
+                                className="w-full bg-[#0d0d0d] border border-[#333] rounded-sm p-1.5 text-xs font-mono text-blue-400 focus:border-blue-500 focus:outline-none"
                             />
-                            <button 
-                                onClick={randomizeSeed}
-                                className="px-3 bg-[#222] border border-[#333] text-[#888] hover:text-[#eee] hover:bg-[#333] rounded-sm"
-                                title="Randomizza Seed"
-                            >
-                                🎲
-                            </button>
                         </div>
-                         <p className="text-[9px] text-[#555]">
-                            Stesso seed = Risultato identico.
-                        </p>
+                        <div>
+                             <label className="block text-[9px] text-[#888] mb-1 font-semibold">SEED</label>
+                             <div className="flex gap-1">
+                                <input 
+                                    type="number" 
+                                    value={seed}
+                                    onChange={(e) => setSeed(parseInt(e.target.value) || 0)}
+                                    className="w-full bg-[#0d0d0d] border border-[#333] rounded-sm p-1.5 text-xs font-mono text-purple-400 focus:border-purple-500 focus:outline-none"
+                                />
+                                <button 
+                                    onClick={randomizeSeed}
+                                    className="px-2 bg-[#222] border border-[#333] text-[#888] hover:text-[#eee] hover:bg-[#333] rounded-sm"
+                                    title="Randomizza"
+                                >
+                                    🎲
+                                </button>
+                             </div>
+                        </div>
                     </div>
 
                     <button 
                         onClick={handleRunDirector}
                         disabled={processState.status === 'parsing' || processState.status === 'thinking' || processState.status === 'calculating' || !sequenceData || srtData.length === 0}
                         className={`
-                            w-full py-2 rounded-sm text-[11px] font-bold text-white tracking-wider uppercase mt-4 transition-all
+                            w-full py-2 rounded-sm text-[11px] font-bold text-white tracking-wider uppercase mt-3 transition-all
                             ${processState.status === 'idle' || processState.status === 'done' || processState.status === 'error'
                                 ? 'bg-[#2b2b2b] hover:bg-[#383838] border border-[#444] active:scale-[0.99]' 
                                 : 'bg-blue-900/20 border border-blue-900 text-blue-400 cursor-wait'}
                              disabled:opacity-30 disabled:cursor-not-allowed
                         `}
                     >
-                        {processState.status === 'idle' && 'ELABORA MONTAGGIO'}
+                        {processState.status === 'idle' && 'ELABORA'}
                         {processState.status === 'done' && 'RIGENERA'}
                         {processState.status === 'error' && 'RIPROVA'}
-                        {processState.status === 'parsing' && 'ANALISI...'}
-                        {processState.status === 'thinking' && 'ELABORAZIONE...'}
-                        {processState.status === 'calculating' && 'ASSEMBLAGGIO...'}
+                        {processState.status === 'parsing' && '...'}
+                        {processState.status === 'thinking' && 'AI...'}
+                        {processState.status === 'calculating' && 'CUT...'}
                     </button>
                     
                     {processState.message && (
-                        <div className={`text-[10px] mt-2 font-mono border-l-2 pl-2 py-1 ${processState.status === 'error' ? 'text-red-400 border-red-900 bg-red-900/10' : 'text-blue-400 border-blue-900 bg-blue-900/10'}`}>
+                        <div className={`text-[9px] mt-1 font-mono border-l-2 pl-2 py-1 leading-tight ${processState.status === 'error' ? 'text-red-400 border-red-900 bg-red-900/10' : 'text-blue-400 border-blue-900 bg-blue-900/10'}`}>
                             {processState.status !== 'idle' && `> ${processState.message}`}
                         </div>
                     )}
@@ -363,9 +389,9 @@ const App: React.FC = () => {
             </div>
 
             {/* Footer */}
-            <div className="p-3 border-t border-[#333] bg-[#0e0e0e]">
+            <div className="p-2 border-t border-[#333] bg-[#0e0e0e]">
                  <div className="text-[9px] text-[#444] font-mono uppercase tracking-widest text-center">
-                        Lavezzo Studios © 2025
+                        Lavezzo Studios
                  </div>
             </div>
         </aside>

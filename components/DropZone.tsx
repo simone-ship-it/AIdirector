@@ -1,4 +1,3 @@
-
 import React, { useCallback } from 'react';
 
 interface DropZoneProps {
@@ -35,7 +34,7 @@ export const DropZone: React.FC<DropZoneProps> = ({ label, accept, onFileLoaded,
             onDrop={onDrop}
             onDragOver={onDragOver}
             className={`
-                relative flex flex-col items-center justify-center h-20 
+                relative flex flex-col items-center justify-center h-16 
                 border border-dashed rounded-sm transition-all duration-300 cursor-pointer
                 ${isLoaded 
                     ? 'border-blue-500/30 bg-blue-900/5' 
@@ -51,17 +50,17 @@ export const DropZone: React.FC<DropZoneProps> = ({ label, accept, onFileLoaded,
             
             {isLoaded ? (
                  <div className="text-center px-2 w-full overflow-hidden">
-                    <div className="flex items-center justify-center gap-2 mb-1 text-blue-400">
+                    <div className="flex items-center justify-center gap-1 mb-0.5 text-blue-400">
                         <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                         </svg>
-                        <span className="text-[9px] font-bold uppercase tracking-wider">Caricato</span>
+                        <span className="text-[8px] font-bold uppercase tracking-wider">Caricato</span>
                     </div>
-                    <p className="text-[10px] text-slate-400 truncate w-full">{fileName}</p>
+                    <p className="text-[9px] text-slate-400 truncate w-full leading-tight">{fileName}</p>
                  </div>
             ) : (
-                <div className="text-center p-2">
-                    <p className="text-[10px] text-[#666] font-bold uppercase tracking-wide">{label}</p>
+                <div className="text-center p-1">
+                    <p className="text-[9px] text-[#666] font-bold uppercase tracking-wide">{label}</p>
                 </div>
             )}
         </div>
