@@ -1,3 +1,4 @@
+
 import React, { useCallback } from 'react';
 
 interface DropZoneProps {
@@ -44,7 +45,8 @@ export const DropZone: React.FC<DropZoneProps> = ({ label, accept, onFileLoaded,
             <input 
                 type="file" 
                 accept={accept}
-                className="absolute inset-0 opacity-0 cursor-pointer"
+                className="absolute inset-0 opacity-0 cursor-pointer z-10"
+                onClick={(e) => { (e.target as HTMLInputElement).value = ''; }}
                 onChange={(e) => e.target.files && handleFile(e.target.files[0])}
             />
             

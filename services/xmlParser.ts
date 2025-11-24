@@ -18,7 +18,6 @@ export class PremiereXmlParser {
     }
     
     let fps = timebaseNode ? parseInt(timebaseNode.textContent || "25", 10) : 25;
-    // Safety check: Prevent 0 or NaN FPS which causes division errors later
     if (isNaN(fps) || fps <= 0) {
         fps = 25;
     }
@@ -101,22 +100,22 @@ export class PremiereXmlParser {
   }
 
   generateExportXml(cuts: EditDecision[], fps: number, width: number, height: number): string {
-    let videoTrackContent = '';
+    let videoTrack1Content = '';
     let audioTrack1Content = '';
     let audioTrack2Content = '';
     
-    let currentTime = 0;
-    
-    // Safety check for FPS to avoid NaN in XML
     const safeFps = (isNaN(fps) || fps <= 0) ? 25 : fps;
 
     cuts.forEach((cut, index) => {
         const duration = cut.duration;
-        const end = currentTime + duration;
+        const start = cut.timelineIn;
+        const end = cut.timelineOut;
         
-        // Video Item
+        // Video Item ID
         const vidId = `clipitem-video-${index + 1}`;
-        videoTrackContent += `
+        const trackIdx = 1; // Force V1 for single track export
+
+        const clipItemXml = `
         <clipitem id="${vidId}">
             <masterclipid>${cut.fileId}</masterclipid> 
             <name>${cut.clipName}</name>
@@ -126,7 +125,7 @@ export class PremiereXmlParser {
                 <timebase>${safeFps}</timebase>
                 <ntsc>FALSE</ntsc>
             </rate>
-            <start>${currentTime}</start>
+            <start>${start}</start>
             <end>${end}</end>
             <in>${cut.sourceIn}</in>
             <out>${cut.sourceOut}</out>
@@ -162,7 +161,7 @@ export class PremiereXmlParser {
              <link>
                 <linkclipref>${vidId}</linkclipref>
                 <mediatype>video</mediatype>
-                <trackindex>1</trackindex>
+                <trackindex>${trackIdx}</trackindex>
                 <clipindex>${index + 1}</clipindex>
             </link>
             <link>
@@ -179,6 +178,8 @@ export class PremiereXmlParser {
             </link>
         </clipitem>`;
 
+        videoTrack1Content += clipItemXml;
+
         // Audio Track 1 Item
         audioTrack1Content += `
         <clipitem id="clipitem-audio1-${index + 1}">
@@ -190,7 +191,7 @@ export class PremiereXmlParser {
                 <timebase>${safeFps}</timebase>
                 <ntsc>FALSE</ntsc>
             </rate>
-            <start>${currentTime}</start>
+            <start>${start}</start>
             <end>${end}</end>
             <in>${cut.sourceIn}</in>
             <out>${cut.sourceOut}</out>
@@ -202,7 +203,7 @@ export class PremiereXmlParser {
             <link>
                 <linkclipref>${vidId}</linkclipref>
                 <mediatype>video</mediatype>
-                <trackindex>1</trackindex>
+                <trackindex>${trackIdx}</trackindex>
                 <clipindex>${index + 1}</clipindex>
             </link>
             <link>
@@ -230,7 +231,7 @@ export class PremiereXmlParser {
                 <timebase>${safeFps}</timebase>
                 <ntsc>FALSE</ntsc>
             </rate>
-            <start>${currentTime}</start>
+            <start>${start}</start>
             <end>${end}</end>
             <in>${cut.sourceIn}</in>
             <out>${cut.sourceOut}</out>
@@ -242,7 +243,7 @@ export class PremiereXmlParser {
             <link>
                 <linkclipref>${vidId}</linkclipref>
                 <mediatype>video</mediatype>
-                <trackindex>1</trackindex>
+                <trackindex>${trackIdx}</trackindex>
                 <clipindex>${index + 1}</clipindex>
             </link>
             <link>
@@ -258,8 +259,6 @@ export class PremiereXmlParser {
                 <clipindex>${index + 1}</clipindex>
             </link>
         </clipitem>`;
-        
-        currentTime = end;
     });
 
     return `<?xml version="1.0" encoding="UTF-8"?>
@@ -286,7 +285,7 @@ export class PremiereXmlParser {
                 </samplecharacteristics>
             </format>
             <track>
-                ${videoTrackContent}
+                ${videoTrack1Content}
             </track>
         </video>
         <audio>

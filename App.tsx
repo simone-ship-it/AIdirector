@@ -1,3 +1,4 @@
+
 import React, { useState, useMemo, useEffect } from 'react';
 import { DropZone } from './components/DropZone';
 import { PreviewTable } from './components/PreviewTable';
@@ -42,6 +43,7 @@ const App: React.FC = () => {
   const [targetDuration, setTargetDuration] = useState<number>(60);
   const [seed, setSeed] = useState<number>(42); // Default deterministic seed
   const [processState, setProcessState] = useState<ProcessingState>({ status: 'idle', message: '' });
+  const [resetKey, setResetKey] = useState<number>(0); // Key to force re-mount of inputs on reset
   
   // -- Services (Memoized) --
   const xmlParser = useMemo(() => new PremiereXmlParser(), []);
@@ -75,11 +77,7 @@ const App: React.FC = () => {
   };
 
   const handleReset = () => {
-      if (sequenceData || srtData.length > 0) {
-          if (!window.confirm("Sei sicuro di voler iniziare un nuovo progetto? I dati attuali andranno persi.")) {
-              return;
-          }
-      }
+      // Immediate reset without confirmation to prevent UX blocking
       setXmlContent('');
       setSrtContent('');
       setXmlName('');
@@ -91,6 +89,8 @@ const App: React.FC = () => {
       setViewMode('source');
       setProcessState({ status: 'idle', message: '' });
       setInstructions('Mantieni le parti più coinvolgenti e riassumi la storia.');
+      setResetKey(prev => prev + 1);
+      window.scrollTo(0, 0);
   };
 
   // Effect: Generate Source Preview when data is ready
@@ -260,13 +260,14 @@ const App: React.FC = () => {
         <aside className="w-72 bg-[#111] border-r border-[#333] flex flex-col z-10">
             <div className="p-3 space-y-4 overflow-y-auto custom-scrollbar flex-1">
                 
-                {/* Step 1: Import (Side-by-side) */}
+                {/* Step 1: Import */}
                 <div>
                     <div className="text-[10px] font-bold text-[#555] uppercase tracking-widest mb-1.5">
                         <span className="text-blue-500 mr-1">01</span> IMPORT
                     </div>
-                    <div className="grid grid-cols-2 gap-2">
+                    <div className="grid grid-cols-2 gap-2 mb-2">
                         <DropZone 
+                            key={`xml-${resetKey}`}
                             label="XML" 
                             accept=".xml" 
                             fileType="xml"
@@ -275,6 +276,7 @@ const App: React.FC = () => {
                             fileName={xmlName}
                         />
                         <DropZone 
+                            key={`srt-${resetKey}`}
                             label="SRT" 
                             accept=".srt" 
                             fileType="srt"
@@ -283,6 +285,23 @@ const App: React.FC = () => {
                             fileName={srtName}
                         />
                     </div>
+
+                    {/* Technical Stats moved here */}
+                    {sequenceData ? (
+                        <div className="bg-[#161616] border border-[#333] rounded-sm p-2">
+                            <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-[9px] font-mono text-[#aaa]">
+                                <div>FPS: <span className="text-[#eee]">{fps.toFixed(2)}</span></div>
+                                <div>CLIP: <span className="text-[#eee]">{uniqueFiles}</span></div>
+                                <div className="col-span-2">RES: <span className="text-[#eee]">{resWidth}x{resHeight}</span></div>
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="bg-[#161616] border border-[#333] border-dashed rounded-sm p-2 text-center">
+                             <span className="text-[9px] font-bold text-[#444] uppercase">
+                                In attesa file
+                            </span>
+                        </div>
+                    )}
                 </div>
 
                 <div className="w-full h-px bg-[#222]"></div>
@@ -293,29 +312,14 @@ const App: React.FC = () => {
                         <span className="text-blue-500 mr-1">02</span> STRATEGIA
                     </div>
                     
-                    {sequenceData ? (
-                        <div className="bg-[#161616] border border-[#333] rounded-sm p-2 mb-2">
-                            <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-[9px] font-mono text-[#aaa]">
-                                <div>FPS: <span className="text-[#eee]">{fps.toFixed(2)}</span></div>
-                                <div>CLIP: <span className="text-[#eee]">{uniqueFiles}</span></div>
-                                <div className="col-span-2">RES: <span className="text-[#eee]">{resWidth}x{resHeight}</span></div>
-                            </div>
-                        </div>
-                    ) : (
-                        <div className="bg-[#161616] border border-[#333] border-dashed rounded-sm p-2 mb-2 text-center">
-                             <span className="text-[9px] font-bold text-[#444] uppercase">
-                                In attesa file
-                            </span>
-                        </div>
-                    )}
-
                     <div>
+                        <label className="block text-[9px] text-[#888] mb-1 font-semibold">ISTRUZIONI EDITOR</label>
                         <textarea 
-                            rows={2}
+                            rows={6}
                             value={instructions}
                             onChange={(e) => setInstructions(e.target.value)}
                             className="w-full bg-[#0d0d0d] border border-[#333] rounded-sm p-2 text-xs leading-relaxed focus:border-blue-500 focus:outline-none resize-none placeholder-[#444] text-[#ccc]"
-                            placeholder="Istruzioni per l'IA..."
+                            placeholder="Descrivi come vuoi montare il video..."
                         />
                     </div>
                 </div>

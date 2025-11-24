@@ -16,67 +16,60 @@ export class GeminiService {
         seed: number
     ): Promise<number[]> {
         // 1. Optimize Input: Send duration (d) and text (t)
+        // We map to a simpler structure to save context window tokens
         const simplifiedTranscript = srtData.map(s => ({
             id: s.id,
-            d: Number((s.endTime - s.startTime).toFixed(1)), // Duration in seconds (1 decimal)
+            d: Number((s.endTime - s.startTime).toFixed(1)),
             t: s.text.replace(/[\r\n]+/g, ' ').trim(), 
         }));
 
-        // 2. Calculate Statistics for strict guidance
         const totalInputDuration = simplifiedTranscript.reduce((acc, cur) => acc + cur.d, 0);
-        const avgLineDuration = totalInputDuration / (simplifiedTranscript.length || 1);
         
-        // Estimate Padding Overhead:
-        // VideoEngine adds 10 frames total padding per cut. At 25fps that is 0.4s.
-        // We use 0.5s to be safe.
-        const ESTIMATED_PADDING_PER_CUT = 0.5;
-        
-        // Calculate a safe "Content Duration" target for the AI.
-        // If we want 60s total, and we expect 10 cuts, we lose 5s to padding.
-        // So AI should only find 55s of raw content.
-        const estimatedCuts = targetDuration / (avgLineDuration + ESTIMATED_PADDING_PER_CUT);
-        const paddingBuffer = estimatedCuts * ESTIMATED_PADDING_PER_CUT; 
-        
-        // Ask AI for slightly LESS than the target to accommodate the engine's padding
-        const aiTargetDuration = Math.max(10, targetDuration - paddingBuffer);
-        const targetLineCount = Math.floor(aiTargetDuration / (avgLineDuration || 1));
-
-        // 3. Construct System Instruction
+        // 2. Construct System Instruction with SCORING concept
         const systemInstruction = `
         Act as a professional Video Editor.
-        Your goal is to select a subset of subtitle IDs to create a video summary.
+        Your goal is to edit a video summary by selecting specific subtitle IDs.
 
-        INPUT DATA:
-        Array of { "id": number, "d": duration_seconds, "t": text }.
-
-        STRICT CONSTRAINTS:
-        1. TOTAL DURATION LIMIT: ${targetDuration} seconds.
-        2. RAW CONTENT GOAL: ~${Math.floor(aiTargetDuration)} seconds (The engine adds padding to cuts).
-        3. TARGET LINES: Approx ${targetLineCount} IDs.
+        INPUT METRICS:
+        - Total Source Duration: ~${Math.round(totalInputDuration)}s
+        - Target Output Duration: ${targetDuration}s
         
         CRITICAL RULES:
-        - DO NOT exceed the duration limit. It is better to be shorter.
-        - You MUST skip less important sections.
-        - Group IDs that form a coherent thought.
-        
-        USER GOAL: "${userInstructions}"
+        1. **FULL COVERAGE**: You MUST pick clips from the BEGINNING, MIDDLE, and END. Do not ignore the ending.
+        2. **STRUCTURE**: You MUST include a brief intro/hook (first 2 mins) to establish context, even if it is short.
+        3. **SCORING**: Assign an 'importance' score (1-10) to every selection. 
+           - 10 = Essential/Climax/Conclusion (MUST INCLUDE).
+           - 8-9 = Strong Context / Hook.
+           - 1 = Filler/Bridge (Can be cut if space is tight).
+        4. **OVER-SELECT**: It is better to select slightly more than ${targetDuration}s. We will prune the low-score items later.
+        5. **NARRATIVE**: Ensure the story makes sense. Keep the setup and the punchline.
+
+        USER INSTRUCTIONS: "${userInstructions}"
         `;
 
         const userPrompt = `
-        TRANSCRIPT DATA:
+        TRANSCRIPT:
         ${JSON.stringify(simplifiedTranscript)}
         `;
 
+        // 3. Schema now requires 'importance'
         const schema: Schema = {
             type: Type.OBJECT,
             properties: {
-                selectedIds: {
+                selectedClips: {
                     type: Type.ARRAY,
-                    items: { type: Type.INTEGER },
-                    description: "The list of SRT IDs selected for the final edit."
+                    items: { 
+                        type: Type.OBJECT,
+                        properties: {
+                            id: { type: Type.INTEGER },
+                            importance: { type: Type.INTEGER, description: "1 to 10. 10 is highest priority." }
+                        },
+                        required: ["id", "importance"]
+                    },
+                    description: "List of selected subtitle segments with priority scores."
                 }
             },
-            required: ["selectedIds"]
+            required: ["selectedClips"]
         };
 
         try {
@@ -87,75 +80,111 @@ export class GeminiService {
                     systemInstruction: systemInstruction,
                     responseMimeType: "application/json",
                     responseSchema: schema,
-                    temperature: 0.1, // Very low temp for strict adherence
+                    temperature: 0.2, // Slightly higher to allow creative distribution
                     seed: seed,
                     thinkingConfig: { thinkingBudget: 0 },
                 }
             });
 
-            // 4. Response Handling
             const candidate = response.candidates?.[0];
-            
-            if (!candidate) {
-                throw new Error("No candidates returned from AI.");
-            }
+            if (!candidate) throw new Error("No response from AI.");
 
-            if (candidate.finishReason !== "STOP") {
-                throw new Error(`AI stopped generation abnormally. Reason: ${candidate.finishReason}.`);
-            }
-
-            let text = response.text;
-            if (!text) throw new Error("Empty text response.");
-
-            // Cleanup
-            text = text.trim();
-            if (text.startsWith('```json')) {
-                text = text.replace(/^```json\s?/, '').replace(/\s?```$/, '');
-            } else if (text.startsWith('```')) {
-                text = text.replace(/^```\s?/, '').replace(/\s?```$/, '');
-            }
+            let text = response.text || "";
+            // Sanitize JSON
+            if (text.startsWith('```json')) text = text.replace(/^```json\s?/, '').replace(/\s?```$/, '');
+            else if (text.startsWith('```')) text = text.replace(/^```\s?/, '').replace(/\s?```$/, '');
             text = text.trim();
 
             const result = JSON.parse(text);
             
-            if (!result.selectedIds || !Array.isArray(result.selectedIds)) {
+            if (!result.selectedClips || !Array.isArray(result.selectedClips)) {
                 throw new Error("Invalid JSON structure");
             }
-            
-            // 5. Post-Processing: HARD LIMIT ENFORCER
-            // We calculate the *actual* duration the VideoEngine will generate.
-            // (Raw Duration + Padding)
-            // We stop adding IDs the moment we cross the targetDuration.
-            
-            let accumulatedDuration = 0;
-            const filteredIds: number[] = [];
-            const idMap = new Map(simplifiedTranscript.map(s => [s.id, s.d]));
 
-            for (const id of result.selectedIds) {
-                const rawDur = idMap.get(id);
+            // 4. POST-PROCESSING: INTELLIGENT PRUNING (The fix for "Barare" & "Cutting Intro")
+            
+            // Map IDs to their durations for quick lookup
+            const durMap = new Map(simplifiedTranscript.map(s => [s.id, s.d]));
+            
+            // Convert to a mutable array of objects { id, importance, duration }
+            let selection = result.selectedClips.map((item: any) => ({
+                id: item.id,
+                importance: item.importance,
+                duration: durMap.get(item.id) || 0
+            }));
+
+            // Filter out invalid IDs
+            selection = selection.filter((s: any) => s.duration > 0);
+
+            // Sort chronologically first to calculate padding accurately
+            selection.sort((a: any, b: any) => a.id - b.id);
+
+            const ESTIMATED_PADDING_PER_JUMP = 0.5;
+
+            // Function to calculate total duration of a list
+            const calculateTotalDuration = (list: any[]) => {
+                let total = 0;
+                let lastId = -999;
+                for (const item of list) {
+                    let cost = item.duration;
+                    if (item.id !== lastId + 1) {
+                         cost += ESTIMATED_PADDING_PER_JUMP; // Add padding cost for jumps
+                    }
+                    total += cost;
+                    lastId = item.id;
+                }
+                return total;
+            };
+
+            // Optimization Loop
+            // While we are over budget, remove the LEAST IMPORTANT clip
+            // FIX: Logic updated to avoid biased removal of the first elements (Intro)
+            let attempts = 0;
+            while (calculateTotalDuration(selection) > targetDuration && selection.length > 0 && attempts < 1000) {
+                attempts++;
                 
-                // Skip invalid IDs
-                if (rawDur === undefined) continue;
+                let removeIdx = -1;
+                let minScore = 11;
+                const len = selection.length;
 
-                // Simulate the VideoEngine's padding logic (approx 0.4s - 0.5s)
-                const clipTotalDuration = rawDur + ESTIMATED_PADDING_PER_CUT;
-
-                // Check if adding this clip would exceed the user's requested total
-                if (accumulatedDuration + clipTotalDuration > targetDuration) {
-                    // Stop immediately. Do not add this clip.
-                    break; 
+                // Identify the lowest score in the set
+                for (let i = 0; i < len; i++) {
+                    if (selection[i].importance < minScore) {
+                        minScore = selection[i].importance;
+                    }
                 }
 
-                accumulatedDuration += clipTotalDuration;
-                filteredIds.push(id);
+                // Find candidate indices with that lowest score
+                const candidates = [];
+                for (let i = 0; i < len; i++) {
+                    if (selection[i].importance === minScore) {
+                        candidates.push(i);
+                    }
+                }
+
+                if (candidates.length > 0) {
+                    // HEURISTIC: If we have multiple candidates with the same low score,
+                    // prefer removing from the MIDDLE first to preserve Start (Hook) and End (Conclusion).
+                    // If the list is short, we just pick the middle index of the candidates.
+                    const middleIndex = Math.floor(candidates.length / 2);
+                    // However, if candidates are scattered, we want the one that is physically in the middle of the video timeline
+                    // But simplified: picking the middle candidate avoids systematically killing index 0.
+                    removeIdx = candidates[middleIndex]; 
+                }
+
+                if (removeIdx !== -1) {
+                    // Remove the low importance clip
+                    selection.splice(removeIdx, 1);
+                } else {
+                    break;
+                }
             }
 
-            // Fallback: If AI returned almost nothing, return at least one ID if available
-            if (filteredIds.length === 0 && result.selectedIds.length > 0) {
-                 return [result.selectedIds[0]];
-            }
-
-            return filteredIds;
+            // 5. Final Sort & Return
+            // Ensure strict chronological order for the timeline
+            selection.sort((a: any, b: any) => a.id - b.id);
+            
+            return selection.map((s: any) => s.id);
 
         } catch (e: any) {
             console.error("Gemini API Error:", e);
