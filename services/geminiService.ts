@@ -12,7 +12,8 @@ export class GeminiService {
     async selectQuotes(
         srtData: SrtEntry[], 
         userInstructions: string, 
-        targetDuration: number
+        targetDuration: number,
+        seed: number
     ): Promise<number[]> {
         // Simplify input significantly to reduce token load
         const simplifiedTranscript = srtData.map(s => ({
@@ -59,7 +60,8 @@ export class GeminiService {
                 config: {
                     responseMimeType: "application/json",
                     responseSchema: schema,
-                    temperature: 0.4, // Slightly higher to prevent "freezing" on strict constraints
+                    temperature: 0.1, // Low temperature for high determinism
+                    seed: seed, // Fix randomness using the seed
                     maxOutputTokens: 8192,
                     safetySettings: [
                         { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },

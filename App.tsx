@@ -1,3 +1,4 @@
+
 import React, { useState, useMemo, useEffect } from 'react';
 import { DropZone } from './components/DropZone';
 import { PreviewTable } from './components/PreviewTable';
@@ -40,6 +41,7 @@ const App: React.FC = () => {
   // Control State
   const [instructions, setInstructions] = useState<string>('Mantieni le parti più coinvolgenti e riassumi la storia.');
   const [targetDuration, setTargetDuration] = useState<number>(60);
+  const [seed, setSeed] = useState<number>(42); // Default deterministic seed
   const [processState, setProcessState] = useState<ProcessingState>({ status: 'idle', message: '' });
   
   // -- Services (Memoized) --
@@ -96,7 +98,7 @@ const App: React.FC = () => {
     setProcessState({ status: 'thinking', message: 'Il Regista IA sta analizzando i testi...' });
 
     try {
-        const selectedIds = await geminiService.selectQuotes(srtData, instructions, targetDuration);
+        const selectedIds = await geminiService.selectQuotes(srtData, instructions, targetDuration, seed);
 
         if (selectedIds.length === 0) {
             setProcessState({ status: 'error', message: 'L\'IA non ha restituito risultati.' });
@@ -126,7 +128,7 @@ const App: React.FC = () => {
     // Create a base filename from the original XML name
     const cleanName = xmlName.toLowerCase().endsWith('.xml') ? xmlName.slice(0, -4) : xmlName;
     const baseName = cleanName || "Sequence"; 
-    const suffix = "_AI_EDIT";
+    const suffix = `_AI_${seed}`;
 
     let content = '';
     let mime = '';
@@ -156,6 +158,10 @@ const App: React.FC = () => {
     a.click();
     document.body.removeChild(a);
   };
+
+  const randomizeSeed = () => {
+      setSeed(Math.floor(Math.random() * 99999));
+  }
 
   // Stats
   const activeCuts = viewMode === 'source' ? sourceCuts : generatedCuts;
@@ -305,6 +311,28 @@ const App: React.FC = () => {
                             onChange={(e) => setTargetDuration(parseInt(e.target.value) || 0)}
                             className="w-full bg-[#0d0d0d] border border-[#333] rounded-sm p-2 text-xs font-mono text-blue-400 focus:border-blue-500 focus:outline-none"
                         />
+                    </div>
+
+                    <div className="flex flex-col gap-1">
+                        <label className="block text-[10px] text-[#888] font-semibold">SEED (CASUALITÀ)</label>
+                        <div className="flex gap-2">
+                             <input 
+                                type="number" 
+                                value={seed}
+                                onChange={(e) => setSeed(parseInt(e.target.value) || 0)}
+                                className="flex-1 bg-[#0d0d0d] border border-[#333] rounded-sm p-2 text-xs font-mono text-purple-400 focus:border-purple-500 focus:outline-none"
+                            />
+                            <button 
+                                onClick={randomizeSeed}
+                                className="px-3 bg-[#222] border border-[#333] text-[#888] hover:text-[#eee] hover:bg-[#333] rounded-sm"
+                                title="Randomizza Seed"
+                            >
+                                🎲
+                            </button>
+                        </div>
+                         <p className="text-[9px] text-[#555]">
+                            Stesso seed = Risultato identico.
+                        </p>
                     </div>
 
                     <button 
